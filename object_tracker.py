@@ -7,6 +7,7 @@ import time
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+import pandas as pd
 
 import tensorflow as tf
 from yolov3_tf2.models import YoloV3
@@ -22,7 +23,8 @@ from tools import generate_detections as gdet
 class_names = [c.strip() for c in open('./data/labels/coco.names').readlines()]
 yolo = YoloV3(classes=len(class_names))
 yolo.load_weights('./weights/yolov3.tf')
-
+df_results=pd.DataFrame()
+df_tracks=pd.DataFrame()
 max_cosine_distance = 0.5
 nn_budget = None
 nms_max_overlap = 0.8
@@ -49,15 +51,15 @@ for i in video_list:
     #saving results in data->video->results
     out = cv2.VideoWriter('./data/video/results.avi', codec, vid_fps, (vid_width, vid_height))
 
-    from _collections import deque
-    pts = [deque(maxlen=30) for _ in range(1000)]
-
     counter = []
+    frame_id=0
     
 
 
     while True:
         _, img = vid.read()
+        frame_id+=1
+        
         if img is None:
             print('Completed')
             break
@@ -76,6 +78,7 @@ for i in video_list:
         t1 = time.time()
 #getting boxes ,confidence scores , classes
         boxes, scores, classes, nums = yolo.predict(img_in)
+        
 
         classes = classes[0]
         names = []
@@ -87,12 +90,21 @@ for i in video_list:
 
         detections = [Detection(bbox, score, class_name, feature) for bbox, score, class_name, feature in
                     zip(converted_boxes, scores[0], names, features)]
-
-        boxs = np.array([d.tlwh for d in detections])
-        scores = np.array([d.confidence for d in detections])
-        classes = np.array([d.class_name for d in detections])
+        
+        # tlwh=list(d.tlwh for d in detections)
+        boxs = np.array([d.tlwh for d in detections]) #top left coordinates,width,hieght
+        scores = np.array([d.confidence for d in detections]) #confidence score
+        classes = np.array([d.class_name for d in detections]) #classes
         indices = preprocessing.non_max_suppression(boxs, classes, nms_max_overlap, scores)
         detections = [detections[i] for i in indices]
+
+        df_results=df_results.append({
+            'tlwh':boxs,
+            'frame_id':frame_id,
+            'confidence':scores
+
+        },ignore_index=True)
+        # print(df_results.head(20))
 
         tracker.predict()
         tracker.update(detections)
@@ -101,7 +113,6 @@ for i in video_list:
         colors = [cmap(i)[:3] for i in np.linspace(0,1,20)]
 
         current_count = int(0)
-
         for track in tracker.tracks:
             if not track.is_confirmed() or track.time_since_update >1:
                 continue
@@ -110,6 +121,13 @@ for i in video_list:
             class_name= track.get_class()
             color = colors[int(track.track_id) % len(colors)]
             color = [i * 255 for i in color]
+            df_tracks=df_tracks.append({
+                'vehicle_id':track.track_id,
+                'bbox_coordinates':bbox,
+                'class_name':class_name,
+            },ignore_index=True)
+
+
 
             cv2.rectangle(img, (int(bbox[0]),int(bbox[1])), (int(bbox[2]),int(bbox[3])), color, 2)
             cv2.rectangle(img, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(class_name)
@@ -132,6 +150,7 @@ for i in video_list:
         
             center_y = int(((bbox[1])+(bbox[3]))/2)
             center_x = int(((bbox[0])+(bbox[2]))/2)
+
             p1=Point(center_x,center_y)
 
             if p1.within(poly):
@@ -148,12 +167,15 @@ for i in video_list:
         cv2.resizeWindow('output', 1024, 768)
         cv2.imshow('output', img)
         out.write(img)
+        df_results.to_csv('/Users/lakshaykalra/Desktop/results.csv',sep=',',encoding='utf-8',index=False)
+        df_tracks.to_csv('/Users/lakshaykalra/Desktop/tracks.csv',sep=',',encoding='utf-8',index=False)
 
         if cv2.waitKey(1) == ord('q'):
             break
     vid.release()
     out.release()
     cv2.destroyAllWindows()
+    
 
 
 
